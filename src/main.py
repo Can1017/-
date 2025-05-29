@@ -2,7 +2,8 @@ import pandas as pd
 import nltk
 from config import *
 from index import build_single_word_index, build_biword_index
-from search import search, compute_idf, get_doc_lengths
+from preprocess import preprocess
+from search import biword_search, search, compute_idf, get_doc_lengths
 from evaluate import evaluate
 
 
@@ -12,18 +13,66 @@ def load_data(filepath):
     return docs
 
 
-def get_snippet(doc_text, query_terms, snippet_len=50):
+def get_snippet(doc_text, query_terms, snippet_len=50, phrases=None):
     text_lower = doc_text.lower()
+    # 1. 优先查找短语
+    if phrases:
+        for phrase in phrases:
+            idx = text_lower.find(phrase.lower())
+            if idx != -1:
+                start = max(0, idx - snippet_len // 2)
+                end = min(len(doc_text), idx + len(phrase) + snippet_len // 2)
+                snippet = doc_text[start:end].replace('\n', ' ')
+                # 绿色高亮
+                colored = f"\033[91m{doc_text[idx:idx+len(phrase)]}\033[0m"
+                snippet = snippet.replace(
+                    doc_text[idx:idx+len(phrase)], colored)
+                return snippet
+    # 2. 查找单词
     for term in query_terms:
         idx = text_lower.find(term.lower())
         if idx != -1:
             start = max(0, idx - snippet_len // 2)
             end = min(len(doc_text), idx + len(term) + snippet_len // 2)
             snippet = doc_text[start:end].replace('\n', ' ')
+            colored = f"\033[91m{doc_text[idx:idx+len(term)]}\033[0m"
             snippet = snippet.replace(
-                doc_text[idx:idx+len(term)], f"[{doc_text[idx:idx+len(term)]}]")
+                doc_text[idx:idx+len(term)], colored)
             return snippet
     return doc_text[:snippet_len] + ("..." if len(doc_text) > snippet_len else "")
+
+
+def get_all_terms_relevant_docs(query_terms, docs):
+    relevant = set()
+    for doc_id, text in docs.items():
+        text_lower = text.lower()
+        if all(term.lower() in text_lower for term in query_terms):
+            relevant.add(doc_id)
+    return relevant
+
+
+def get_head_relevant_docs(query_terms, docs, head_n=10):
+    relevant = set()
+    for doc_id, text in docs.items():
+        tokens = text.lower().split()[:head_n]
+        if all(term.lower() in tokens for term in query_terms):
+            relevant.add(doc_id)
+    return relevant
+
+
+def get_strict_relevant_docs(query_terms, docs, window=10):
+    relevant = set()
+    for doc_id, text in docs.items():
+        tokens = text.lower().split()
+        positions = []
+        for term in query_terms:
+            if term.lower() in tokens:
+                positions.append(tokens.index(term.lower()))
+            else:
+                break
+        if len(positions) == len(query_terms) and max(positions) - min(positions) <= window:
+            relevant.add(doc_id)
+    return relevant
 
 
 def print_config(config):
@@ -34,7 +83,6 @@ def main():
     nltk.download('punkt')
     docs = load_data(data_path)
     N = len(docs)
-    
 
     # 可动态修改的预处理配置
     config = PREPROCESS_CONFIG.copy()
@@ -125,8 +173,9 @@ def main():
                 doc_scores = {}
                 # 1. 处理短语部分（biword索引）
                 for phrase in phrases:
-                    tokens = phrase.strip().split()
-                    if len(tokens) < 2:
+                    tokens = preprocess(phrase, config)
+                    if len(tokens) == 1:
+                        # 单个词，走单词索引
                         if scheme == "bm25":
                             results = search(
                                 tokens[0], single_index, config, TOP_N, scheme, idf_dict, rank_func, doc_lengths, avg_dl)
@@ -137,26 +186,21 @@ def main():
                             doc_scores[doc_id] = doc_scores.get(
                                 doc_id, 0) + score
                     else:
-                        biwords = [' '.join(tokens[i:i+2])
-                                   for i in range(len(tokens)-1)]
-                        for biword in biwords:
-                            if scheme == "bm25":
-                                results = search(
-                                    tokens[0], single_index, config, TOP_N, scheme, idf_dict, rank_func, doc_lengths, avg_dl)
-                            else:
-                                results = search(
-                                    tokens[0], single_index, config, TOP_N, scheme, idf_dict if scheme == "tfidf" else None, rank_func)
+                        # 多词短语，走biword索引
+                        if len(preprocess(phrase, config)) > 1:
+                            results = biword_search(
+                                phrase, biword_index, config)
                             for doc_id, score in results:
                                 doc_scores[doc_id] = doc_scores.get(
                                     doc_id, 0) + score
                 # 2. 处理自由词部分（单词索引）
                 if free_words:
-                    if scheme == "bm25":
-                        results = search(free_words, single_index, config, TOP_N,
-                                         scheme, idf_dict, rank_func, doc_lengths, avg_dl)
-                    else:
-                        results = search(free_words, single_index, config, TOP_N,
-                                         scheme, idf_dict if scheme == "tfidf" else None, rank_func)
+                    # 一次性传入所有自由词
+                    results = search(free_words, single_index, config, TOP_N, scheme,
+                                     idf_dict if scheme == "tfidf" else idf_dict if scheme == "bm25" else None,
+                                     rank_func,
+                                     doc_lengths if scheme == "bm25" else None,
+                                     avg_dl if scheme == "bm25" else None)
                     for doc_id, score in results:
                         doc_scores[doc_id] = doc_scores.get(doc_id, 0) + score
                 # 3. 排序输出
@@ -174,10 +218,18 @@ def main():
                                     key=lambda x: x[1], reverse=True)[:TOP_N]
                 print(f"\n[权重方案: {scheme} | 排序方式: {rank_func}]")
                 print("Rank\tScore\tDocID\tSummary Snippet")
+                retrieved_docids = []
                 for rank, (doc_id, score) in enumerate(ranked, 1):
                     doc_text = docs[doc_id]
-                    snippet = get_snippet(doc_text, all_terms)
+                    snippet = get_snippet(doc_text, all_terms, phrases=phrases)
                     print(f"{rank}\t{score}\t{doc_id}\t{snippet}")
+                    retrieved_docids.append(doc_id)
+
+                # 计算并打印评估指标
+                rel_docs = get_all_terms_relevant_docs(all_terms, docs)
+                precision, recall, f1 = evaluate(retrieved_docids, rel_docs)
+                print(
+                    f"Precision: {precision:.4f}  Recall: {recall:.4f}  F1: {f1:.4f}")
 
 
 if __name__ == "__main__":

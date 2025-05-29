@@ -61,7 +61,12 @@ def search(query, index, config, top_n=10, scheme="tf", idf_dict=None, rank_func
         else:
             for doc_id in postings:
                 doc_scores[doc_id] += 1
-    # 排名函数
+    if len(tokens) > 1:
+        doc_sets = [set(index.index.get(token, [])) for token in tokens]
+        common_docs = set.intersection(*doc_sets) if doc_sets else set()
+        doc_scores = {doc_id: score for doc_id,
+                      score in doc_scores.items() if doc_id in common_docs}
+    # 排名方式
     if rank_func == "desc_score":
         ranked = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)
     elif rank_func == "asc_score":
@@ -71,3 +76,16 @@ def search(query, index, config, top_n=10, scheme="tf", idf_dict=None, rank_func
     else:
         ranked = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)
     return ranked[:top_n]
+
+
+def biword_search(phrase, biword_index, config):
+    tokens = preprocess(phrase, config)
+    if len(tokens) < 2:
+        return []
+    biwords = [' '.join(tokens[i:i+2]) for i in range(len(tokens)-1)]
+    doc_sets = [set(biword_index.index.get(bw, [])) for bw in biwords]
+    if not doc_sets:
+        return []
+    common_docs = set.intersection(*doc_sets)
+    # 分数可以设为biword命中数
+    return [(doc_id, len(biwords)) for doc_id in common_docs]
