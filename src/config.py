@@ -23,4 +23,4 @@ weight_schemes = ["tf", "tfidf", "bm25"]
 rank_funcs = ["desc_score"]
 
 TOP_N = 10
-data_path = '../data/2k_data.json'
+data_path = '../data/example_data.json'
