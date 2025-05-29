@@ -15,6 +15,7 @@ PREPROCESS_CONFIG = {
 
 weight_schemes = ["tf", "tfidf", "bm25"]
 
+# 结果展示依照的规则
 # desc_score：按得分从高到低排序
 # #asc_docid：按文档编号从小到大排序
 # #asc_docid：按文档编号从小到大排序

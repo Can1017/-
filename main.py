@@ -34,9 +34,11 @@ def main():
     nltk.download('punkt')
     docs = load_data(data_path)
     N = len(docs)
+    
 
     # 可动态修改的预处理配置
     config = PREPROCESS_CONFIG.copy()
+    TOP_N = 10
 
     print("欢迎使用信息检索系统。")
     print("支持命令: set [option] [True/False]，如 set stemming False")
@@ -170,7 +172,7 @@ def main():
                 else:
                     ranked = sorted(doc_scores.items(),
                                     key=lambda x: x[1], reverse=True)[:TOP_N]
-                print(f"\n[权重方案: {scheme} | 排名函数: {rank_func}]")
+                print(f"\n[权重方案: {scheme} | 排序方式: {rank_func}]")
                 print("Rank\tScore\tDocID\tSummary Snippet")
                 for rank, (doc_id, score) in enumerate(ranked, 1):
                     doc_text = docs[doc_id]
